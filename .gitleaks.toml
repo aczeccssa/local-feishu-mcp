@@ -1,0 +1,40 @@
+# .gitleaks.toml
+# Custom Gitleaks rules for Feishu-specific credential detection
+
+[allowlist]
+description = "Placeholder keys and known safe feishu URLs"
+regexes = [
+  "your_[a-z_]+_here",
+  "https://sample\\.feishu\\.cn",
+  "https://open\\.feishu\\.cn",
+]
+paths = [
+  "\\.env\\.example$",
+  "\\.md$",
+  "SECURITY_AUDIT_REPORT",
+]
+
+[[rules]]
+id = "feishu-app-credential-cli"
+description = "Feishu App Credential (cli_ prefix)"
+# Feishu App IDs always start with cli_ followed by alphanumeric chars
+regex = "(?i)(feishu|lark)[_-]?(app[_-]?id|app[_-]?secret)[=:]\\s*([\"']?cli_[a-zA-Z0-9_\\-]{10,}[\"']?)"
+tags = ["feishu", "credential"]
+
+[[rules]]
+id = "internal-api-key"
+description = "Internal API Key pattern"
+regex = "(?i)(api[_-]?key|secret[_-]?key)[=:][ \"']?[a-zA-Z0-9_\\-]{20,}[ \"']?"
+tags = ["secret", "api-key"]
+
+[[rules]]
+id = "jwt-token-inline"
+description = "Inline JWT Token"
+regex = "eyJ[a-zA-Z0-9_-]+\\.eyJ[a-zA-Z0-9_-]+\\.[a-zA-Z0-9_-]+"
+tags = ["jwt", "token"]
+
+[[rules]]
+id = "connection-string-with-password"
+description = "Connection string with embedded password"
+regex = "(?i)(mongodb|mysql|postgresql|redis|amqp|amqps)[s]?://[^:]+:[^@]+@"
+tags = ["secret", "connection-string"]

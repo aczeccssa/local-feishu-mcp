@@ -1,105 +1,584 @@
-# 飞书文档 MCP
+# Local Feishu MCP
 
-一个用于连接飞书文档的Model Context Protocol (MCP) 服务，可以在Cursor等AI客户端中直接访问飞书文档空间和文档列表。
+Local Feishu MCP is a Model Context Protocol (MCP) server for Feishu/Lark Docs and Wiki.
 
-## 功能特点
+It lets MCP-compatible AI clients connect to your Feishu tenant and use Feishu document tools directly from coding assistants and desktop AI apps.
 
-- 支持获取飞书全部云文档空间列表
-- 支持获取指定空间的文档列表
-- 通过MCP协议与AI客户端无缝连接
+## What This Project Can Do
 
-## 什么是MCP
+This server currently exposes the following capabilities:
 
-MCP (Model Context Protocol) 是一个将自定义服务与各种LLM客户端（如Claude、Cursor）无缝连接的协议。它允许AI直接调用和使用我们的服务功能。
+- `list-spaces`
+  - List all Feishu wiki/document spaces that the configured app can access.
+- `list-documents`
+  - List documents in a specific space.
+  - List documents across all accessible spaces.
+  - Return both the wiki `nodeToken` and the resolved document token when available.
+- `read-document`
+  - Read Feishu Wiki nodes.
+  - Read Feishu `docx` documents.
+  - Read legacy Feishu `doc` documents.
+  - Accept either a token or a Feishu URL.
+  - Support `plain` output for raw text.
+  - Support `rich` output for LLM-friendly Markdown.
+  - Automatically resolve `wiki node_token -> obj_token`.
+  - Prefer upgraded `docx` content when reading legacy `doc` content if configured.
+  - Fall back from `docx raw_content` to block-based reading when the raw content API is too large.
 
-- **MCP客户端**：AI应用程序（如Claude Desktop或Cursor），负责发起请求并与服务器通信
-- **MCP服务器**：本项目，暴露飞书文档功能，通过标准化协议与客户端交互
+## What This Project Does Not Do
 
-## 安装与运行
+The current version does not support:
 
-### 从源码安装
+- Writing or updating documents
+- Deleting documents
+- Searching document content
+- Reading Sheets, Bitable, Slides, files, or MindNotes
+- Local indexing or database-backed synchronization
+
+## Transport Modes
+
+The server supports two MCP transport modes:
+
+- `stdio`
+  - Best option for local MCP clients such as Cursor, Claude Desktop, Cline, and Roo Code
+- `http`
+  - Exposes an HTTP/SSE MCP endpoint
+  - Useful for tools that connect to MCP over URL
+
+Default behavior:
+
+- Default transport: `http`
+- Default host: `127.0.0.1`
+- Default port: `7777`
+
+## Security Model
+
+The current implementation includes these protections:
+
+- HTTP mode binds to `127.0.0.1` by default
+- Optional `MCP_AUTH_TOKEN` authentication for HTTP/SSE mode
+- Host header validation
+- Basic rate limiting
+- Request timeout protection
+- Sanitized logging to avoid leaking access tokens and secrets
+
+Recommended practice:
+
+- Prefer `stdio` whenever your client supports it
+- If you use HTTP mode, set a strong `MCP_AUTH_TOKEN`
+- Do not expose the service on `0.0.0.0` unless you have an explicit reverse-proxy and authentication design
+- Never commit `.env`
+
+## Requirements
+
+- Node.js 20+
+- `pnpm` recommended for local development
+- A Feishu self-built app with the correct API scopes
+- Access authorization to the target Feishu spaces or documents
+
+## Feishu App Setup
+
+Create a self-built app in the Feishu Open Platform and collect:
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+
+Minimum scopes for current features:
+
+- Wiki space and node listing
+  - `wiki:node:read` or equivalent read-only wiki scope available in your app configuration
+- `docx` reading
+  - `docx:document:readonly`
+- Legacy `doc` reading
+  - `docs:document.content:read` or equivalent legacy docs read scope
+
+Important:
+
+- API scopes alone are not enough
+- The app must also be granted access to the actual Feishu resources you want to read
+- A wiki URL token is usually a `node_token`, not the actual `docx` document token
+- This server resolves the wiki node to the real object token internally
+
+## Local Setup
+
+Clone the repository and install dependencies:
 
 ```bash
-# 克隆项目
-git clone https://github.com/yourusername/jiang-feishu-mcp.git
-cd jiang-feishu-mcp
-
-# 安装依赖
+git clone <your-repo-url>
+cd local-feishu-mcp
 pnpm install
-
-# 启动服务
-pnpm start
 ```
 
-服务器将在本地7777端口启动。
-
-## 配置
-
-在使用前，您需要创建一个`.env`文件配置飞书应用凭证：
+Create the environment file:
 
 ```bash
-# 复制示例配置文件
 cp .env.example .env
 ```
 
-然后编辑`.env`文件，填入您的飞书应用凭证：
+Example `.env`:
 
-```
-FEISHU_APP_ID=your_app_id_here
-FEISHU_APP_SECRET=your_app_secret_here
+```dotenv
+FEISHU_APP_ID=cli_xxx
+FEISHU_APP_SECRET=xxxxxx
 
-# 可选：设置端口号 (默认为7777)
+# Transport: stdio or http
+MCP_TRANSPORT=stdio
+
+# HTTP mode only
+HOST=127.0.0.1
 PORT=7777
 
-# 可选：设置文档保存路径 (默认为 ./docs)
-DOCS_SAVE_PATH=./docs
+# Strongly recommended for HTTP mode
+MCP_AUTH_TOKEN=replace_with_a_long_random_token
+
+# Optional extra allowed hosts for HTTP mode
+# MCP_ALLOWED_HOSTS=localhost,127.0.0.1,[::1]
 ```
 
-获取飞书应用凭证的步骤：
+## Start the Server
 
-1. 访问[飞书开放平台](https://open.feishu.cn/)并登录
-2. 创建一个企业自建应用
-3. 在应用详情页获取App ID和App Secret
-4. 确保开启了云文档相关权限（文档、表格、云空间读取权限）
+### Option 1: Run from local source
 
-## 在Cursor中使用
+HTTP mode:
 
-1. 启动服务器：`pnpm start`
-2. 打开Cursor的设置页面
-3. 找到"Model Context Protocol"设置
-4. 添加新的MCP Server，URL填入：`http://localhost:7777/mcp`
-5. 保存设置
-
-现在，您可以在Cursor中使用以下工具：
-
-- `list-spaces`: 列出所有文档空间
-- `list-documents`: 列出所有或指定空间的文档
-
-## 示例用法
-
-在Cursor中，您可以这样使用MCP工具：
-
-```
-请列出我所有的飞书文档空间
+```bash
+pnpm start
 ```
 
+stdio mode:
+
+```bash
+MCP_TRANSPORT=stdio pnpm start
 ```
-请列出空间ID为"XYZ123"中的所有文档
+
+### Option 2: Run through `npx` from a local checkout
+
+This is the most useful pattern for MCP client configuration when you want to launch directly from source without installing globally.
+
+```bash
+MCP_TRANSPORT=stdio npx -y tsx /ABSOLUTE/PATH/TO/local-feishu-mcp/src/index.ts
 ```
 
-## 技术架构
+### Option 3: Run through `npx` as an npm package
 
-该项目使用了以下技术：
+Use this only if `feishu-mcp` has been published to your npm registry or private registry.
 
-- Node.js 和 TypeScript：开发环境
-- MCP SDK：实现MCP服务器接口
-- Express：提供HTTP服务
-- 飞书开放API：访问飞书文档内容
+```bash
+MCP_TRANSPORT=stdio npx -y feishu-mcp
+```
 
-## 注意事项
+## MCP Client Configuration
 
-- 应用需要有访问飞书云文档的权限
+Below are practical configuration patterns for common MCP-enabled development tools.
 
-## 许可证
+Use `stdio` unless your client specifically requires URL-based MCP.
 
-MIT 
+### Generic stdio MCP configuration
+
+Use this structure for any client that accepts `command`, `args`, and `env`:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "tsx", "/ABSOLUTE/PATH/TO/local-feishu-mcp/src/index.ts"],
+  "env": {
+    "FEISHU_APP_ID": "cli_xxx",
+    "FEISHU_APP_SECRET": "xxxxxx",
+    "MCP_TRANSPORT": "stdio"
+  }
+}
+```
+
+If you publish the package to npm, you can switch to:
+
+```json
+{
+  "command": "npx",
+  "args": ["-y", "feishu-mcp"],
+  "env": {
+    "FEISHU_APP_ID": "cli_xxx",
+    "FEISHU_APP_SECRET": "xxxxxx",
+    "MCP_TRANSPORT": "stdio"
+  }
+}
+```
+
+### Cursor
+
+Cursor supports MCP server definitions through its MCP settings UI or configuration file, depending on your version.
+
+Use a stdio server definition like this:
+
+```json
+{
+  "mcpServers": {
+    "feishu": {
+      "command": "npx",
+      "args": ["-y", "tsx", "/ABSOLUTE/PATH/TO/local-feishu-mcp/src/index.ts"],
+      "env": {
+        "FEISHU_APP_ID": "cli_xxx",
+        "FEISHU_APP_SECRET": "xxxxxx",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+Typical flow in Cursor:
+
+1. Open Cursor settings.
+2. Open MCP configuration.
+3. Add a new server named `feishu`.
+4. Paste the configuration above.
+5. Save and reload Cursor if needed.
+6. Ask Cursor to call one of the Feishu tools.
+
+### Claude Desktop
+
+For Claude Desktop, add the MCP server to the app MCP configuration.
+
+Example:
+
+```json
+{
+  "mcpServers": {
+    "feishu": {
+      "command": "npx",
+      "args": ["-y", "tsx", "/ABSOLUTE/PATH/TO/local-feishu-mcp/src/index.ts"],
+      "env": {
+        "FEISHU_APP_ID": "cli_xxx",
+        "FEISHU_APP_SECRET": "xxxxxx",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+Typical flow:
+
+1. Open the Claude Desktop MCP config file.
+2. Add the `feishu` server entry.
+3. Restart Claude Desktop.
+4. Confirm the server is connected.
+5. Ask Claude to list spaces or read a document.
+
+### Cline
+
+Cline generally uses MCP stdio server definitions in the same `command + args + env` style.
+
+Example:
+
+```json
+{
+  "mcpServers": {
+    "feishu": {
+      "command": "npx",
+      "args": ["-y", "tsx", "/ABSOLUTE/PATH/TO/local-feishu-mcp/src/index.ts"],
+      "env": {
+        "FEISHU_APP_ID": "cli_xxx",
+        "FEISHU_APP_SECRET": "xxxxxx",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+### Roo Code
+
+Roo Code can use the same stdio MCP launch pattern.
+
+Example:
+
+```json
+{
+  "mcpServers": {
+    "feishu": {
+      "command": "npx",
+      "args": ["-y", "tsx", "/ABSOLUTE/PATH/TO/local-feishu-mcp/src/index.ts"],
+      "env": {
+        "FEISHU_APP_ID": "cli_xxx",
+        "FEISHU_APP_SECRET": "xxxxxx",
+        "MCP_TRANSPORT": "stdio"
+      }
+    }
+  }
+}
+```
+
+### HTTP/SSE MCP clients
+
+If your MCP client connects over URL instead of spawning a local process, run the server in HTTP mode:
+
+```bash
+MCP_TRANSPORT=http pnpm start
+```
+
+Endpoints:
+
+- Health check: `http://127.0.0.1:7777/health`
+- MCP SSE endpoint: `http://127.0.0.1:7777/mcp`
+- MCP message endpoint: `http://127.0.0.1:7777/mcp-messages`
+
+If `MCP_AUTH_TOKEN` is set, connect with:
+
+```text
+http://127.0.0.1:7777/mcp?token=YOUR_TOKEN
+```
+
+## Tool Reference
+
+### `list-spaces`
+
+Purpose:
+
+- List all accessible Feishu spaces
+
+Input:
+
+- No arguments
+
+Example request:
+
+```text
+List all Feishu spaces available to this app.
+```
+
+Example result shape:
+
+```json
+{
+  "spaces": [
+    {
+      "id": "7342174929384005634",
+      "name": "Engineering Wiki"
+    }
+  ]
+}
+```
+
+### `list-documents`
+
+Purpose:
+
+- List documents in one space or all spaces
+
+Input:
+
+- `spaceId` optional
+
+Example request:
+
+```text
+List all documents in space 7342174929384005634.
+```
+
+Example result shape:
+
+```json
+{
+  "documents": [
+    {
+      "id": "wikcnxxxxxxxxxxxxxxxx",
+      "nodeToken": "wikcnxxxxxxxxxxxxxxxx",
+      "documentToken": "doxcnxxxxxxxxxxxxxxx",
+      "documentType": "docx",
+      "name": "Architecture Overview",
+      "type": "docx",
+      "spaceId": "7342174929384005634",
+      "spaceName": "Engineering Wiki"
+    }
+  ]
+}
+```
+
+### `read-document`
+
+Purpose:
+
+- Read a Feishu Wiki node, `docx`, or legacy `doc`
+
+Input:
+
+- `input`
+  - A wiki token, `docx` token, legacy `doc` token, or a Feishu URL
+- `format`
+  - `plain` or `rich`
+  - Default: `plain`
+- `tokenType`
+  - `auto`, `node`, `docx`, or `doc`
+  - Default: `auto`
+- `preferUpgraded`
+  - `true` or `false`
+  - Default: `true`
+
+Examples:
+
+Read from a wiki URL:
+
+```json
+{
+  "input": "https://sample.feishu.cn/wiki/AbCdEfGhIjKlMnOpQrStUvwx",
+  "format": "plain"
+}
+```
+
+Read a `docx` document as Markdown:
+
+```json
+{
+  "input": "doxcnePuYufKa49ISjhD8Iabcef",
+  "tokenType": "docx",
+  "format": "rich"
+}
+```
+
+Read a legacy `doc` and prefer the upgraded `docx` if one exists:
+
+```json
+{
+  "input": "doccnilYPZU5b34ow4ca7aNoU6a",
+  "tokenType": "doc",
+  "format": "plain",
+  "preferUpgraded": true
+}
+```
+
+Example result shape:
+
+```json
+{
+  "title": "Architecture Overview",
+  "sourceType": "docx",
+  "resolvedToken": "doxcnxxxxxxxxxxxxxxx",
+  "contentFormat": "markdown",
+  "content": "# Architecture Overview\n\nSystem design notes...",
+  "metadata": {
+    "inputType": "node",
+    "requestedFormat": "rich"
+  }
+}
+```
+
+## End-to-End Usage Examples
+
+### Example 1: List spaces
+
+Ask your MCP client:
+
+```text
+List all Feishu spaces I can access.
+```
+
+### Example 2: List documents in a space
+
+```text
+List all documents in space 7342174929384005634.
+```
+
+### Example 3: Read a wiki page
+
+```text
+Read this Feishu wiki page and summarize it:
+https://sample.feishu.cn/wiki/AbCdEfGhIjKlMnOpQrStUvwx
+```
+
+### Example 4: Read a document as Markdown for LLM processing
+
+```text
+Read this document in rich mode and return Markdown:
+{
+  "input": "doxcnePuYufKa49ISjhD8Iabcef",
+  "format": "rich"
+}
+```
+
+### Example 5: Use the server for code or document workflows
+
+Practical prompts:
+
+- `List all Feishu spaces available to this app.`
+- `List documents in the Engineering Wiki space.`
+- `Read this Feishu page and extract the action items.`
+- `Read this architecture document as Markdown and generate a technical summary.`
+- `Compare two Feishu documents and identify differences in design decisions.`
+
+## Error Handling
+
+The server normalizes common document read failures into structured errors such as:
+
+- `invalid_input`
+- `unsupported_type`
+- `permission_denied`
+- `not_found`
+- `rate_limited`
+- `content_too_large`
+- `upstream_error`
+
+This makes it easier for MCP clients and agents to handle Feishu API failures predictably.
+
+## Limitations
+
+- `rich` mode is optimized for readability, not perfect visual fidelity
+- `docx` blocks are converted to Markdown with a conservative renderer
+- Images, attachments, tables, and unsupported block types may be represented as placeholders
+- Legacy `doc` rich content is normalized for readability and may not preserve all original formatting semantics
+
+## Development
+
+Type-check:
+
+```bash
+pnpm exec tsc --noEmit
+```
+
+Run in stdio mode:
+
+```bash
+MCP_TRANSPORT=stdio pnpm start
+```
+
+Run in HTTP mode:
+
+```bash
+MCP_TRANSPORT=http pnpm start
+```
+
+## Troubleshooting
+
+### The MCP client cannot connect
+
+Check:
+
+- The absolute path in the `npx tsx /ABSOLUTE/PATH/.../src/index.ts` command is correct
+- `FEISHU_APP_ID` and `FEISHU_APP_SECRET` are set
+- `MCP_TRANSPORT=stdio` is set for stdio-based clients
+- Your MCP client supports stdio MCP correctly
+
+### The server starts but no spaces or documents are returned
+
+Check:
+
+- Your Feishu app scopes are correct
+- The target resources were shared with or authorized to the app
+- You are using the correct tenant/app credentials
+
+### A wiki link does not resolve
+
+Check:
+
+- The URL is a valid Feishu Wiki or Docs URL
+- The app has permission to access the target node
+- The target resource is really a supported document type
+
+### HTTP mode works locally but not from another machine
+
+That is expected with the secure default configuration.
+
+The server binds to `127.0.0.1` by default. If you change that, you are responsible for proper network exposure controls and authentication.
+
+## License
+
+MIT

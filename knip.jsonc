@@ -1,0 +1,34 @@
+{
+  // Knip 配置 — 检测未使用的依赖和二进制文件
+  // https://knip.dev/
+  // v6 schema: https://knip.dev/reference/configuration
+
+  // 入口文件（用于追踪依赖）
+  "entry": ["src/index.ts"],
+
+  // 项目文件范围
+  "project": ["src/**/*.ts"],
+
+  // 忽略的依赖（devDependencies 中被工具链使用，非直接引用的包）
+  "ignoreDependencies": ["@types/node", "@types/express", "ts-node", "tsx", "husky", "lint-staged"],
+
+  // 忽略特定文件
+  "ignoreFiles": ["*.d.ts", "*.test.ts", "*.spec.ts"],
+
+  // MCP SDK/工具调用链通过字符串名注册，Knip 无法追踪，忽略相关导出警告
+  "ignoreExportsUsedInFile": true,
+
+  // 规则配置
+  "rules": {
+    // 忽略 exports 类型警告（MCP 工具链调用 + 内部类型导出误报）
+    "exports": "warn",
+    // 忽略 types 警告（内部接口/类型导出）
+    "types": "warn",
+    // 忽略 binary 警告（gitleaks 来自系统安装，非 npm 包）
+    "binaries": "warn",
+    // 忽略 devDependencies 警告
+    "devDependencies": "warn",
+    // 忽略未解析引用警告
+    "unresolved": "warn",
+  },
+}
