@@ -33,3 +33,9 @@ Thumbs.db
 # Misc
 temp/
 tmp/
+
+# IDE/OS accidental case collision with .gitignore
+.gitIgnore
+
+# Security reports (local only, not for version control)
+SECURITY_AUDIT_REPORT_*.md

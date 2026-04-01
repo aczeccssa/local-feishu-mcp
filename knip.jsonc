@@ -15,6 +15,9 @@
   // 忽略特定文件
   "ignoreFiles": ["*.d.ts", "*.test.ts", "*.spec.ts"],
 
+  // 二进制文件
+  "ignoreBinaries": ["gitleaks"],
+
   // MCP SDK/工具调用链通过字符串名注册，Knip 无法追踪，忽略相关导出警告
   "ignoreExportsUsedInFile": true,
 
