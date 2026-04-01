@@ -24,6 +24,14 @@ This server currently exposes the following capabilities:
   - Automatically resolve `wiki node_token -> obj_token`.
   - Prefer upgraded `docx` content when reading legacy `doc` content if configured.
   - Fall back from `docx raw_content` to block-based reading when the raw content API is too large.
+- `list-drive-documents`
+  - List files and folders in a Feishu Cloud Drive (云文档) location.
+  - Pass a `folderToken` to list a specific folder, or omit it to list the root directory.
+  - Support pagination, sorting by edited time or created time, and ascending/descending order.
+- `list-drive-files-tree`
+  - List files and folders in a tree structure with recursive subdirectory expansion.
+  - Pass a `folderToken` to start from a specific folder, or omit it to start from the root.
+  - Control recursion depth via `maxDepth` (default 3, max 10) and page size per level.
 
 ## What This Project Does Not Do
 
@@ -91,6 +99,8 @@ Minimum scopes for current features:
   - `docx:document:readonly`
 - Legacy `doc` reading
   - `docs:document.content:read` or equivalent legacy docs read scope
+- Drive file listing (`list-drive-documents` and `list-drive-files-tree`)
+  - `drive:file:read`
 
 Important:
 
@@ -394,7 +404,116 @@ Example result shape:
 }
 ```
 
-### `read-document`
+### `list-drive-documents`
+
+Purpose:
+
+- List files and folders in a Feishu Cloud Drive location
+
+Input:
+
+- `folderToken` optional — folder token; omit to list the root directory
+- `pageSize` optional — number of files per page (1–100, default 50)
+- `pageToken` optional — pagination cursor
+- `orderBy` optional — `EditedTime` or `CreatedTime` (default `EditedTime`)
+- `direction` optional — `Asc` or `Desc` (default `Desc`)
+
+Example — list root directory:
+
+```text
+List files in the root of my Feishu Cloud Drive.
+```
+
+Example — list a specific folder:
+
+```json
+{
+  "folderToken": "fldcnxxxxxxxxxxxxxxxx"
+}
+```
+
+Example result shape:
+
+```json
+{
+  "files": [
+    {
+      "token": "doccnxxxxxxxxxxxxxxxx",
+      "name": "Project Notes",
+      "type": "docx",
+      "size": "4096",
+      "createdTime": "2024-01-01T00:00:00Z",
+      "editedTime": "2024-06-15T12:00:00Z",
+      "owner": "Alice",
+      "ownerId": "ou_xxxxxxxx",
+      "parentTokens": ["fldcnxxxxxxxx"],
+      "url": "https://.feishu.cn/docx/doccnxxxxxxxxxxxxxxxx"
+    }
+  ],
+  "pageToken": null,
+  "hasMore": false
+}
+```
+
+### `list-drive-files-tree`
+
+Purpose:
+
+- List files and folders as a recursive tree structure
+
+Input:
+
+- `folderToken` optional — folder token; omit to start from the root directory
+- `maxDepth` optional — maximum recursion depth (1–10, default 3)
+- `pageSize` optional — number of files per level (1–100, default 50)
+
+Example — list root as a tree (depth 3):
+
+```text
+Show me a file tree of my Feishu Cloud Drive root.
+```
+
+Example — list with deeper recursion:
+
+```json
+{
+  "maxDepth": 5
+}
+```
+
+Example — list a specific folder tree:
+
+```json
+{
+  "folderToken": "fldcnxxxxxxxxxxxxxxxx",
+  "maxDepth": 2,
+  "pageSize": 20
+}
+```
+
+Example result shape:
+
+```json
+{
+  "tree": [
+    {
+      "token": "fldcnxxxxxxxx",
+      "name": "Projects",
+      "type": "folder",
+      "children": [
+        {
+          "token": "doccnxxxxxxxx",
+          "name": "Project A",
+          "type": "docx",
+          "children": []
+        }
+      ]
+    }
+  ]
+}
+```
+
+
 
 Purpose:
 

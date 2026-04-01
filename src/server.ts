@@ -28,6 +28,13 @@ const spaceIdSchema = z
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/, '空间ID只能包含字母、数字、下划线和短横线');
 
+const folderTokenSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/, '文件夹token只能包含字母、数字、下划线和短横线');
+
 type RateLimitEntry = {
   count: number;
   resetAt: number;
@@ -323,6 +330,134 @@ export class FeishuMcpServer {
         }
       },
     );
+
+    this.server.tool(
+      'list-drive-documents',
+      '列出云文档 (Drive) 文件，支持列出根目录文件或指定文件夹中的文件',
+      {
+        folderToken: folderTokenSchema
+          .optional()
+          .describe('文件夹 token，不提供则列出根目录 Drive 文件'),
+        pageSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .default(50)
+          .describe('每页返回数量 (1-100)'),
+        pageToken: z.string().optional().describe('分页游标'),
+        orderBy: z
+          .enum(['EditedTime', 'CreatedTime'])
+          .optional()
+          .default('EditedTime')
+          .describe('排序字段'),
+        direction: z.enum(['Asc', 'Desc']).optional().default('Desc').describe('排序方向'),
+      },
+      async ({
+        folderToken,
+        pageSize = 50,
+        pageToken = '',
+        orderBy = 'EditedTime',
+        direction = 'Desc',
+      }) => {
+        try {
+          const response = await feishuClient.listDriveFiles(
+            folderToken,
+            pageSize,
+            pageToken,
+            orderBy,
+            direction,
+          );
+
+          return {
+            content: [
+              {
+                type: 'text',
+                text: JSON.stringify({
+                  files: (response.files || []).map(f => ({
+                    token: f.token,
+                    name: f.name,
+                    type: f.type,
+                    size: f.size,
+                    createdTime: f.created_time,
+                    editedTime: f.edited_time,
+                    owner: f.owner?.name ?? null,
+                    ownerId: f.owner?.id ?? null,
+                    parentTokens: f.parent_tokens ?? [],
+                    url: f.url ?? null,
+                  })),
+                  pageToken: response.page_token ?? null,
+                  hasMore: response.has_more,
+                }),
+              },
+            ],
+          };
+        } catch (error) {
+          Logger.error('列出 Drive 文件失败:', error);
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `列出 Drive 文件失败: ${error instanceof Error ? error.message : '未知错误'}`,
+              },
+            ],
+          };
+        }
+      },
+    );
+
+    this.server.tool(
+      'list-drive-files-tree',
+      '以树形结构列出飞书云文档 (Drive) 文件和文件夹，支持递归展开子目录',
+      {
+        folderToken: folderTokenSchema
+          .optional()
+          .describe('文件夹 token，不提供则列出根目录的树形结构'),
+        maxDepth: z
+          .number()
+          .int()
+          .min(1)
+          .max(10)
+          .optional()
+          .default(3)
+          .describe('最大递归深度 (1-10)'),
+        pageSize: z
+          .number()
+          .int()
+          .min(1)
+          .max(100)
+          .optional()
+          .default(50)
+          .describe('每层文件夹返回的文件数量 (1-100)'),
+      },
+      async ({ folderToken, maxDepth = 3, pageSize = 50 }) => {
+        try {
+          const tree = await feishuClient.listDriveFilesRecursively(
+            folderToken ?? '',
+            pageSize,
+            0,
+            maxDepth,
+          );
+
+          return {
+            content: [{ type: 'text', text: JSON.stringify({ tree }) }],
+          };
+        } catch (error) {
+          Logger.error('列出 Drive 文件树失败:', error);
+          return {
+            isError: true,
+            content: [
+              {
+                type: 'text',
+                text: `列出 Drive 文件树失败: ${error instanceof Error ? error.message : '未知错误'}`,
+              },
+            ],
+          };
+        }
+      },
+    );
   }
 
   /**
@@ -441,6 +576,8 @@ export class FeishuMcpServer {
             <ul>
               <li>列出知识空间</li>
               <li>列出空间文档</li>
+              <li>列出云文档 (Drive) 文件</li>
+              <li>列出云文档 (Drive) 文件树（支持递归展开子目录）</li>
               <li>读取知识库节点、docx 和旧版 doc 文档内容</li>
             </ul>
           </body>

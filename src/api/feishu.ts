@@ -132,6 +132,32 @@ function buildErrorMessage(
   return parts.join(' | ');
 }
 
+export interface DriveFile {
+  token: string;
+  name: string;
+  type: string;
+  size: string;
+  created_time: string;
+  edited_time: string;
+  owner?: { id: string; name: string; tenant_key?: string };
+  parent_tokens?: string[];
+  url?: string;
+}
+
+export interface DriveFileListResponse {
+  files: DriveFile[];
+  page_token?: string;
+  has_more: boolean;
+}
+
+export interface DriveFileMetaResponse {
+  file: DriveFile;
+}
+
+export interface DriveFileTreeNode extends DriveFile {
+  children?: DriveFileTreeNode[];
+}
+
 export class FeishuClient {
   private readonly appId: string;
   private readonly appSecret: string;
@@ -395,6 +421,90 @@ export class FeishuClient {
     return this.request<LegacyDocRichContentResponse>(
       'GET',
       `/doc/v2/${encodeURIComponent(docToken)}/content`,
+    );
+  }
+
+  async listDriveFiles(
+    folderToken?: string,
+    pageSize = 50,
+    pageToken?: string,
+    orderBy: 'EditedTime' | 'CreatedTime' = 'EditedTime',
+    direction: 'Asc' | 'Desc' | 'ASC' | 'DESC' = 'Desc',
+  ): Promise<DriveFileListResponse> {
+    const params: Record<string, unknown> = {
+      page_size: pageSize,
+      order_by: orderBy,
+      direction: direction.toUpperCase() as 'ASC' | 'DESC',
+    };
+    // 只在有 folderToken 时才传递，飞书 API 不传时默认查根目录
+    if (folderToken !== undefined) {
+      params.folder_token = folderToken;
+    }
+    if (pageToken) {
+      params.page_token = pageToken;
+    }
+
+    return this.request<DriveFileListResponse>('GET', '/drive/v1/files', null, params);
+  }
+
+  async listDriveFilesRecursively(
+    folderToken: string,
+    pageSize = 50,
+    depth = 0,
+    maxDepth = 3,
+  ): Promise<DriveFileTreeNode[]> {
+    if (depth >= maxDepth) return [];
+
+    const files: DriveFileTreeNode[] = [];
+    let pageToken = '';
+    let hasMore = true;
+
+    while (hasMore) {
+      const response = await this.listDriveFiles(
+        folderToken,
+        pageSize,
+        pageToken,
+        'EditedTime',
+        'ASC',
+      );
+
+      for (const file of response.files || []) {
+        const node: DriveFileTreeNode = {
+          token: file.token,
+          name: file.name,
+          type: file.type,
+          size: file.size,
+          created_time: file.created_time,
+          edited_time: file.edited_time,
+          owner: file.owner,
+          parent_tokens: file.parent_tokens,
+          url: file.url,
+        };
+
+        // 文件夹类型递归获取子内容
+        if (file.type === 'folder' || file.type === 'docs_folder') {
+          node.children = await this.listDriveFilesRecursively(
+            file.token,
+            pageSize,
+            depth + 1,
+            maxDepth,
+          );
+        }
+
+        files.push(node);
+      }
+
+      hasMore = response.has_more ?? false;
+      pageToken = response.page_token ?? '';
+    }
+
+    return files;
+  }
+
+  async getDriveFileMeta(fileToken: string): Promise<DriveFileMetaResponse> {
+    return this.request<DriveFileMetaResponse>(
+      'GET',
+      `/drive/v1/files/${encodeURIComponent(fileToken)}/meta`,
     );
   }
 }
