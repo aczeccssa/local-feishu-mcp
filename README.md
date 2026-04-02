@@ -64,11 +64,13 @@ Default behavior:
 The current implementation includes these protections:
 
 - HTTP mode binds to `127.0.0.1` by default
-- Optional `MCP_AUTH_TOKEN` authentication for HTTP/SSE mode
-- Host header validation
-- Basic rate limiting
+- Optional `MCP_AUTH_TOKEN` authentication for HTTP/SSE mode (supports both `Authorization: Bearer <token>` header and `?token=<token>` query parameter)
+- Host header validation (only allows configured host, `localhost`, `127.0.0.1`, `::1`, and hosts in `MCP_ALLOWED_HOSTS`)
+- Basic rate limiting (configurable window and max requests)
 - Request timeout protection
-- Sanitized logging to avoid leaking access tokens and secrets
+- Sanitized logging to avoid leaking access tokens and secrets (auto-redacts keys matching `authorization`, `token`, `secret`, `password`)
+- Response headers: `Cache-Control: no-store`, `X-Content-Type-Options: nosniff`
+- `X-Powered-By` header disabled
 
 Recommended practice:
 
@@ -128,6 +130,7 @@ cp .env.example .env
 Example `.env`:
 
 ```dotenv
+# Feishu application credentials
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxxxxx
 
@@ -138,12 +141,32 @@ MCP_TRANSPORT=stdio
 HOST=127.0.0.1
 PORT=7777
 
-# Strongly recommended for HTTP mode
+# Strongly recommended for HTTP mode — supports Bearer Token or ?token=...
 MCP_AUTH_TOKEN=replace_with_a_long_random_token
 
-# Optional extra allowed hosts for HTTP mode
+# Optional: extra allowed hosts for HTTP mode (comma-separated)
 # MCP_ALLOWED_HOSTS=localhost,127.0.0.1,[::1]
+
+# Optional: HTTP request security limits
+MCP_RATE_LIMIT_WINDOW_MS=60000
+MCP_RATE_LIMIT_MAX=120
+MCP_REQUEST_TIMEOUT_MS=30000
 ```
+
+### Environment Variables Reference
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `FEISHU_APP_ID` | Yes | — | Feishu self-built app ID (`cli_xxx`) |
+| `FEISHU_APP_SECRET` | Yes | — | Feishu self-built app secret |
+| `MCP_TRANSPORT` | No | `http` | Transport mode: `stdio` or `http` |
+| `HOST` | No | `127.0.0.1` | HTTP server bind address |
+| `PORT` | No | `7777` | HTTP server port |
+| `MCP_AUTH_TOKEN` | No | — | Auth token for HTTP mode (Bearer or `?token=`) |
+| `MCP_ALLOWED_HOSTS` | No | — | Extra allowed Host headers (comma-separated) |
+| `MCP_RATE_LIMIT_WINDOW_MS` | No | `60000` | Rate limit window in milliseconds |
+| `MCP_RATE_LIMIT_MAX` | No | `120` | Max requests per rate limit window |
+| `MCP_REQUEST_TIMEOUT_MS` | No | `30000` | HTTP request timeout in milliseconds |
 
 ## Start the Server
 
@@ -326,17 +349,19 @@ If your MCP client connects over URL instead of spawning a local process, run th
 MCP_TRANSPORT=http pnpm start
 ```
 
-Endpoints:
+HTTP endpoints:
 
-- Health check: `http://127.0.0.1:7777/health`
-- MCP SSE endpoint: `http://127.0.0.1:7777/mcp`
-- MCP message endpoint: `http://127.0.0.1:7777/mcp-messages`
+| Endpoint | Method | Description |
+|---|---|---|
+| `http://127.0.0.1:7777/` | GET | HTML status page showing server info and capabilities |
+| `http://127.0.0.1:7777/health` | GET | Health check (returns `OK`) |
+| `http://127.0.0.1:7777/mcp` | GET | MCP SSE connection endpoint |
+| `http://127.0.0.1:7777/mcp-messages` | POST | MCP message endpoint (session-based) |
 
-If `MCP_AUTH_TOKEN` is set, connect with:
+If `MCP_AUTH_TOKEN` is set, clients can authenticate via either method:
 
-```text
-http://127.0.0.1:7777/mcp?token=YOUR_TOKEN
-```
+- **Query parameter**: `http://127.0.0.1:7777/mcp?token=YOUR_TOKEN`
+- **Bearer header**: `Authorization: Bearer YOUR_TOKEN`
 
 ## Tool Reference
 
@@ -377,7 +402,7 @@ Purpose:
 
 Input:
 
-- `spaceId` optional
+- `spaceId` optional — space ID; omit to list documents across all accessible spaces
 
 Example request:
 
@@ -401,6 +426,88 @@ Example result shape:
       "spaceName": "Engineering Wiki"
     }
   ]
+}
+```
+
+### `read-document`
+
+Purpose:
+
+- Read a Feishu Wiki node, `docx`, or legacy `doc`
+
+Input:
+
+- `input`
+  - A wiki token, `docx` token, legacy `doc` token, or a Feishu URL
+- `format`
+  - `plain` or `rich`
+  - Default: `plain`
+- `tokenType`
+  - `auto`, `node`, `docx`, or `doc`
+  - Default: `auto`
+- `preferUpgraded`
+  - `true` or `false`
+  - Default: `true`
+
+Token type auto-detection:
+
+- When `tokenType` is `auto`, the server identifies the type from:
+  - **URL path**: `/wiki/...` → `node`, `/docx/...` → `docx`, `/docs/...` → `doc`
+  - **Token prefix**: `wik*` → `node`, `dox*` → `docx`, `doc*` → `doc`
+
+Reading logic:
+
+- `format=plain`: tries `raw_content` API first; falls back to block-based reading if content is too large
+- `format=rich`: converts docx blocks to Markdown with inline styles (bold, italic, code, links, etc.)
+- `preferUpgraded=true` on legacy `doc`: checks for upgraded `docx` token and reads from it if available
+- Unsupported block types (images, tables, bitable, files, etc.) are rendered as placeholders
+
+Examples:
+
+Read from a wiki URL:
+
+```json
+{
+  "input": "https://sample.feishu.cn/wiki/AbCdEfGhIjKlMnOpQrStUvwx",
+  "format": "plain"
+}
+```
+
+Read a `docx` document as Markdown:
+
+```json
+{
+  "input": "doxcnePuYufKa49ISjhD8Iabcef",
+  "tokenType": "docx",
+  "format": "rich"
+}
+```
+
+Read a legacy `doc` and prefer the upgraded `docx` if one exists:
+
+```json
+{
+  "input": "doccnilYPZU5b34ow4ca7aNoU6a",
+  "tokenType": "doc",
+  "format": "plain",
+  "preferUpgraded": true
+}
+```
+
+Example result shape:
+
+```json
+{
+  "title": "Architecture Overview",
+  "sourceType": "docx",
+  "resolvedToken": "doxcnxxxxxxxxxxxxxxx",
+  "contentFormat": "markdown",
+  "content": "# Architecture Overview\n\nSystem design notes...",
+  "metadata": {
+    "originalInput": "doxcnePuYufKa49ISjhD8Iabcef",
+    "tokenType": "docx",
+    "requestedFormat": "rich"
+  }
 }
 ```
 
@@ -513,74 +620,6 @@ Example result shape:
 }
 ```
 
-
-
-Purpose:
-
-- Read a Feishu Wiki node, `docx`, or legacy `doc`
-
-Input:
-
-- `input`
-  - A wiki token, `docx` token, legacy `doc` token, or a Feishu URL
-- `format`
-  - `plain` or `rich`
-  - Default: `plain`
-- `tokenType`
-  - `auto`, `node`, `docx`, or `doc`
-  - Default: `auto`
-- `preferUpgraded`
-  - `true` or `false`
-  - Default: `true`
-
-Examples:
-
-Read from a wiki URL:
-
-```json
-{
-  "input": "https://sample.feishu.cn/wiki/AbCdEfGhIjKlMnOpQrStUvwx",
-  "format": "plain"
-}
-```
-
-Read a `docx` document as Markdown:
-
-```json
-{
-  "input": "doxcnePuYufKa49ISjhD8Iabcef",
-  "tokenType": "docx",
-  "format": "rich"
-}
-```
-
-Read a legacy `doc` and prefer the upgraded `docx` if one exists:
-
-```json
-{
-  "input": "doccnilYPZU5b34ow4ca7aNoU6a",
-  "tokenType": "doc",
-  "format": "plain",
-  "preferUpgraded": true
-}
-```
-
-Example result shape:
-
-```json
-{
-  "title": "Architecture Overview",
-  "sourceType": "docx",
-  "resolvedToken": "doxcnxxxxxxxxxxxxxxx",
-  "contentFormat": "markdown",
-  "content": "# Architecture Overview\n\nSystem design notes...",
-  "metadata": {
-    "inputType": "node",
-    "requestedFormat": "rich"
-  }
-}
-```
-
 ## End-to-End Usage Examples
 
 ### Example 1: List spaces
@@ -644,13 +683,47 @@ This makes it easier for MCP clients and agents to handle Feishu API failures pr
 - `docx` blocks are converted to Markdown with a conservative renderer
 - Images, attachments, tables, and unsupported block types may be represented as placeholders
 - Legacy `doc` rich content is normalized for readability and may not preserve all original formatting semantics
+- `list-drive-files-tree` recursive depth is capped at 10 levels
+- Drive file tree only recurses into `folder` and `docs_folder` type nodes
 
 ## Development
+
+Install dependencies:
+
+```bash
+pnpm install
+```
 
 Type-check:
 
 ```bash
-pnpm exec tsc --noEmit
+pnpm typecheck
+```
+
+Lint:
+
+```bash
+pnpm lint
+pnpm lint:fix
+```
+
+Format:
+
+```bash
+pnpm format:check
+pnpm format:write
+```
+
+Dead code analysis:
+
+```bash
+pnpm knip
+```
+
+Full gate (typecheck + lint + knip + format check):
+
+```bash
+pnpm gate
 ```
 
 Run in stdio mode:
